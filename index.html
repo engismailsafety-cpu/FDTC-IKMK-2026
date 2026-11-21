@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FDTC Exam Portal | منصة اختبارات التحول الرقمي (CSV Edition)</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>FDTC Exam Portal | منصة اختبارات التحول الرقمي (Auto-Sync CSV)</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
   <style>
@@ -125,7 +128,10 @@
           <h2 class="text-xl font-extrabold text-slate-900">FDTC Training Modules (7 Modules)</h2>
           <p class="text-sm text-slate-500 ar">اختر الموديول للتدريب العشوائي أو لبدء محاكاة الامتحان الفعلي (40 سؤال عشوائي في 60 دقيقة)</p>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <span id="syncStatusBadge" class="bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-xl text-xs font-bold">
+            Auto-Synced / محدث تلقائياً
+          </span>
           <span id="totalQuestionsBadge" class="bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-xl text-xs font-bold">
             Total Loaded: 0 Questions
           </span>
@@ -235,21 +241,23 @@
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
         <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4">
-          <h3 class="font-extrabold text-base text-slate-900 border-b pb-2">1. Questions CSV Source / مصدر الأسئلة (CSV فقط)</h3>
+          <h3 class="font-extrabold text-base text-slate-900 border-b pb-2">1. Questions CSV Source / مصدر الأسئلة (CSV)</h3>
           <div class="space-y-2">
-            <label class="block text-xs font-bold text-slate-700">Import Questions from CSV File / استيراد الأسئلة من ملف CSV</label>
+            <label class="block text-xs font-bold text-slate-700">Import Local CSV / استيراد ملف CSV للتجربة</label>
             <input id="localQuestionsFile" type="file" accept=".csv" onchange="app.importLocalQuestionsCSV(event)" class="w-full text-xs text-slate-600 file:mr-2 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-emerald-600 file:text-white file:font-bold cursor-pointer" />
             <p class="text-[11px] text-slate-500 ar leading-relaxed">
-              الأعمدة المطلوبة في ملف CSV: <br>
-              <span class="font-mono text-[10px] text-slate-700">module, qAr, qEn, opt1Ar..opt4Ar, opt1En..opt4En, correct, expAr, expEn</span>
+              لتحديث الأسئلة تلقائياً عند <strong>جميع المشتركين</strong>: ارفع الملف باسم <span class="font-mono font-bold text-indigo-700">questions.csv</span> بجانب <span class="font-mono font-bold text-indigo-700">index.html</span> على الاستضافة.
             </p>
           </div>
           <div class="pt-2 border-t space-y-2">
+            <button onclick="app.forceReloadHostedCSV()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2.5 rounded-xl">
+              Reload Hosted questions.csv / إعادة تحميل الملف من الاستضافة
+            </button>
             <button onclick="app.exportQuestionsCSV()" class="w-full bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold py-2.5 rounded-xl">
               Export All Questions CSV / تصدير الأسئلة CSV
             </button>
             <button onclick="app.clearAllQuestions()" class="w-full bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold py-2 rounded-xl">
-              Clear Loaded Questions / مسح الأسئلة الحالية
+              Clear Local Cache / مسح الكاش المحلي
             </button>
           </div>
         </div>
@@ -452,7 +460,8 @@
       }
     ];
 
-    const STORAGE_KEY = "FDTC_PORTAL_V13_CSV_ONLY";
+    const STORAGE_KEY = "FDTC_PORTAL_V14_AUTO_SYNC_CSV";
+    const HOSTED_CSV_FILE = "questions.csv";
 
     function shuffleArray(list) {
       const arr = [...list];
@@ -512,6 +521,7 @@
         testConfig: { count: 40, mins: 60, passPct: 70, showExp: false, trialEnabled: true, trialCount: 5 },
         users: [],
         questions: { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: [] },
+        lastCsvSignature: "",
         session: null,
         userPage: 1,
         exam: null
@@ -535,30 +545,81 @@
         }
         this.updatePublicBranding();
 
-        // Auto-load questions.csv if hosted alongside index.html over HTTP/HTTPS
-        if (window.location.protocol.startsWith("http")) {
-          await this.tryAutoLoadHostedCSV();
-        }
+        // Always fetch the latest questions.csv automatically on page load for all subscribers
+        await this.syncHostedCSV(true);
+
+        // Background auto-sync every 2 minutes + whenever subscriber returns to browser tab
+        setInterval(() => this.syncHostedCSV(true), 120000);
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "visible") {
+            this.syncHostedCSV(true);
+          }
+        });
 
         if (this.state.session && this.state.session.role !== "guest_trial") {
           this.onLoginSuccess(this.state.session);
         }
       },
 
-      async tryAutoLoadHostedCSV() {
+      async syncHostedCSV(silent = true) {
+        if (!window.location.protocol.startsWith("http")) return false;
+        const statusEl = document.getElementById("syncStatusBadge");
         try {
-          const res = await fetch(`questions.csv?_t=${Date.now()}`);
-          if (!res.ok) return;
-          const text = (await res.text()).replace(/^\uFEFF/, "");
-          if (!text.trim()) return;
-          this.parseAndApplyCSVText(text);
+          if (statusEl) statusEl.textContent = "Checking updates... / جاري التحقق...";
+          const res = await fetch(`${HOSTED_CSV_FILE}?_t=${Date.now()}`, {
+            cache: "no-store",
+            headers: {
+              "Cache-Control": "no-cache, no-store, must-revalidate",
+              "Pragma": "no-cache"
+            }
+          });
+          if (!res.ok) {
+            if (statusEl) statusEl.textContent = "Local Mode / وضع محلي";
+            return false;
+          }
+          const rawText = (await res.text()).replace(/^\uFEFF/, "");
+          if (!rawText.trim()) return false;
+
+          // Update immediately whenever file content changes or memory has no questions
+          const sig = `${rawText.length}_${rawText.slice(0, 120)}_${rawText.slice(-120)}`;
+          if (sig !== this.state.lastCsvSignature || this.getTotalQuestionsCount() === 0) {
+            this.parseAndApplyCSVText(rawText, false);
+            this.state.lastCsvSignature = sig;
+            this.saveState();
+            this.renderModules();
+          }
+
+          if (statusEl) {
+            const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+            statusEl.textContent = `Auto-Synced (${now}) / محدث تلقائياً`;
+          }
+          return true;
         } catch (_) {
-          // Silent ignore if questions.csv is not placed on host
+          if (statusEl) statusEl.textContent = "Cached / نسخة محفوظة";
+          return false;
+        }
+      },
+
+      async forceReloadHostedCSV() {
+        this.state.lastCsvSignature = "";
+        const ok = await this.syncHostedCSV(false);
+        if (ok) {
+          alert(`تم تحديث الأسئلة من السيرفر بنجاح (${this.getTotalQuestionsCount()} سؤال)!`);
+        } else {
+          alert("لم يتم العثور على ملف questions.csv بجانب index.html على الاستضافة.");
         }
       },
 
       saveState() {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+        } catch (e) {
+          // If localStorage quota is exceeded on mobile browsers, save settings & users without large question bank
+          try {
+            const lightweight = { ...this.state, questions: { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: [] }, lastCsvSignature: "" };
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweight));
+          } catch (_) {}
+        }
       },
 
       updatePublicBranding() {
@@ -590,7 +651,7 @@
         document.getElementById("loginErrorMsg").classList.add("hidden");
       },
 
-      handleStudentLogin(e) {
+      async handleStudentLogin(e) {
         e.preventDefault();
         const u = document.getElementById("loginUsername").value.trim().toLowerCase();
         const p = document.getElementById("loginPassword").value.trim();
@@ -609,10 +670,11 @@
         err.classList.add("hidden");
         this.state.session = { role: "student", name: found.name, username: found.username };
         this.saveState();
+        await this.syncHostedCSV(true);
         this.onLoginSuccess(this.state.session);
       },
 
-      handleAdminLogin(e) {
+      async handleAdminLogin(e) {
         e.preventDefault();
         const p = document.getElementById("adminPasswordInput").value.trim();
         const err = document.getElementById("loginErrorMsg");
@@ -620,6 +682,7 @@
           err.classList.add("hidden");
           this.state.session = { role: "admin", name: "System Administrator", username: "admin" };
           this.saveState();
+          await this.syncHostedCSV(true);
           this.onLoginSuccess(this.state.session);
         } else {
           err.textContent = "Wrong Admin Password / كلمة مرور المسؤول غير صحيحة";
@@ -668,6 +731,7 @@
         if (viewName === "dashboard") {
           document.getElementById("viewDashboard").classList.remove("hidden");
           this.renderModules();
+          this.syncHostedCSV(true);
         }
         if (viewName === "exam") document.getElementById("viewExam").classList.remove("hidden");
         if (viewName === "result") document.getElementById("viewResult").classList.remove("hidden");
@@ -684,7 +748,8 @@
 
       renderModules() {
         const grid = document.getElementById("modulesGrid");
-        document.getElementById("totalQuestionsBadge").textContent = `Total Loaded: ${this.getTotalQuestionsCount()} Questions (CSV)`;
+        if (!grid) return;
+        document.getElementById("totalQuestionsBadge").textContent = `Total Loaded: ${this.getTotalQuestionsCount()} Questions`;
         const trialQCount = this.state.testConfig.trialCount || 5;
         grid.innerHTML = MODULES_META.map(m => {
           const count = (this.state.questions[m.id] || []).length;
@@ -740,7 +805,7 @@
           const trialSource = pool.length > 0 ? pool : SAMPLE_TRIAL_QUESTIONS;
           pool = shuffleArray(trialSource).slice(0, Math.min(limit, trialSource.length));
         } else if (pool.length === 0) {
-          alert("لا توجد أسئلة محملة لهذا الموديول بعد.\nيرجى استيراد ملف الأسئلة بصيغة CSV من لوحة المسؤول (Admin Panel).");
+          alert("لا توجد أسئلة محملة لهذا الموديول بعد.\nتأكد من رفع ملف questions.csv على الاستضافة بجانب index.html.");
           return;
         }
 
@@ -941,7 +1006,7 @@
         document.getElementById("adminNewPass").value = this.state.adminPass;
       },
 
-      applyQuestionsList(list) {
+      applyQuestionsList(list, persist = true) {
         const grouped = { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: [] };
         list.forEach(item => {
           const m = Number(item.module) || 1;
@@ -966,11 +1031,13 @@
           }
         });
         this.state.questions = grouped;
-        this.saveState();
-        this.renderModules();
+        if (persist) {
+          this.saveState();
+          this.renderModules();
+        }
       },
 
-      parseAndApplyCSVText(text) {
+      parseAndApplyCSVText(text, persist = true) {
         const rows = parseCSVLine(text);
         if (!rows || rows.length < 2) throw new Error("ملف CSV فارغ أو لا يحتوي على صفوف بيانات");
         const headers = rows[0].map(h => h.trim());
@@ -982,7 +1049,7 @@
           if (!obj.qEn && !obj.qAr) continue;
           list.push(obj);
         }
-        this.applyQuestionsList(list);
+        this.applyQuestionsList(list, persist);
       },
 
       importLocalQuestionsCSV(e) {
@@ -992,7 +1059,7 @@
         reader.onload = (ev) => {
           try {
             const text = ev.target.result.replace(/^\uFEFF/, "");
-            this.parseAndApplyCSVText(text);
+            this.parseAndApplyCSVText(text, true);
             alert(`تم استيراد ${this.getTotalQuestionsCount()} سؤالاً من ملف CSV بنجاح!`);
           } catch (err) {
             alert("خطأ في قراءة ملف CSV: " + err.message);
@@ -1002,11 +1069,12 @@
       },
 
       clearAllQuestions() {
-        if (!confirm("هل تريد مسح جميع الأسئلة المحملة حالياً؟")) return;
+        if (!confirm("هل تريد مسح الكاش المحلي وإعادة التحميل من السيرفر؟")) return;
         this.state.questions = { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: [] };
+        this.state.lastCsvSignature = "";
         this.saveState();
         this.renderModules();
-        alert("تم مسح الأسئلة.");
+        this.syncHostedCSV(true);
       },
 
       exportQuestionsCSV() {
@@ -1024,7 +1092,7 @@
             ].join(","));
           });
         }
-        this.downloadFile("\uFEFF" + lines.join("\n"), "FDTC_Exported_Questions.csv", "text/csv;charset=utf-8;");
+        this.downloadFile("\uFEFF" + lines.join("\n"), "questions.csv", "text/csv;charset=utf-8;");
       },
 
       saveTestSettings() {
