@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FDTC Exam Portal | منصة اختبارات التحول الرقمي (Google Sheet CSV Auto-Sync)</title>
+  <title>FDTC Exam Portal | منصة اختبارات التحول الرقمي</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
   <style>
@@ -130,8 +130,8 @@
           <span id="totalQuestionsBadge" class="bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-xl text-xs font-bold">
             Total Loaded: 0 Questions
           </span>
-          <button id="btnSyncSheet" onclick="app.syncFromGoogleSheetCSV(false)" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow transition">
-            Sync Sheet CSV / تحديث من الشيت
+          <button id="btnSyncCloud" onclick="app.syncFromCloud(false)" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow transition">
+            Sync Cloud / تحديث الأسئلة
           </button>
         </div>
       </div>
@@ -239,19 +239,21 @@
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
         <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4">
-          <h3 class="font-extrabold text-base text-slate-900 border-b pb-2">1. Google Sheet CSV Source / مصدر CSV جوجل شيت</h3>
+          <h3 class="font-extrabold text-base text-slate-900 border-b pb-2">1. Questions Source (Cloud & Local CSV)</h3>
           <div>
-            <label class="block text-xs font-bold text-slate-600 mb-1">Published Google Sheet CSV URL (...output=csv)</label>
-            <input id="adminSheetCsvUrl" type="url" placeholder="https://docs.google.com/spreadsheets/d/.../pub?output=csv" class="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs" />
+            <label class="block text-xs font-bold text-slate-600 mb-1">Google Apps Script Web App URL (/exec)</label>
+            <input id="adminCloudUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec" class="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs" />
           </div>
-          <button onclick="app.saveSheetCsvUrl()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2.5 rounded-xl">
-            Save & Sync Sheet CSV / حفظ ومزامنة الشيت
-          </button>
+          <div class="flex gap-2">
+            <button onclick="app.saveCloudSettings()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2 rounded-xl">
+              Save & Sync Cloud
+            </button>
+          </div>
           <div class="pt-2 border-t space-y-2">
-            <label class="block text-xs font-bold text-slate-700">Or Import Local CSV File / أو استيراد ملف CSV محلي</label>
-            <input id="localQuestionsFile" type="file" accept=".csv" onchange="app.importLocalQuestionsCSV(event)" class="w-full text-xs text-slate-600 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-emerald-600 file:text-white file:font-bold cursor-pointer" />
+            <label class="block text-xs font-bold text-slate-700">Import Local Questions (CSV)</label>
+            <input id="localQuestionsFile" type="file" accept=".csv" onchange="app.importLocalQuestionsCSV(event)" class="w-full text-xs text-slate-600 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-emerald-50 file:text-emerald-700 file:font-bold" />
             <button onclick="app.exportQuestionsCSV()" class="w-full bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold py-2 rounded-xl">
-              Export All Questions CSV / تصدير الأسئلة CSV
+              Export All Questions CSV / تصدير الأسئلة
             </button>
           </div>
         </div>
@@ -396,8 +398,7 @@
   </div>
 
   <script>
-    // ضع هنا رابط النشر بصيغة CSV من Google Sheets (Publish to web -> CSV) ليصل تلقائياً لكل المشتركين
-    const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRRel4oHXgF0PiQk0JXoIEz5UdjZjcoAoROpuSZth6YWQPHnKVCqjQwE48_9EsL6P7KRwfk8QWyeFRK/pub?gid=729111561&single=true&output=csv";
+    const DEFAULT_CLOUD_URL = "https://script.google.com/macros/s/AKfycbyJs-TncR7OCmH9llD5NHp1YlwlDcUmpRNiApkvfg9fgVvH_RON7f7a6qX5rgvYlm_H/exec";
 
     const MODULES_META = [
       { id: 1, code: "BIT 01", titleEn: "Fundamentals of IT & Operating Systems", titleAr: "أساسيات تكنولوجيا المعلومات ونظم التشغيل" },
@@ -457,7 +458,7 @@
       }
     ];
 
-    const STORAGE_KEY = "FDTC_PORTAL_V14_SHEET_CSV_AUTO";
+    const STORAGE_KEY = "FDTC_PORTAL_V15_EXEC_READY";
 
     function shuffleArray(list) {
       const arr = [...list];
@@ -509,12 +510,29 @@
       return rows;
     }
 
+    function normalizeExecUrl(rawUrl) {
+      let u = String(rawUrl || "").trim();
+      if (!u) return "";
+      if (!/^https?:\/\//i.test(u)) u = "https://" + u;
+      if (u.includes("script.google.com/macros/s/") && u.endsWith("/dev")) {
+        u = u.replace(/\/dev$/, "/exec");
+      }
+      return u;
+    }
+
+    function extractQuestionsArray(payload) {
+      if (Array.isArray(payload)) return payload;
+      if (payload && Array.isArray(payload.questions)) return payload.questions;
+      if (payload && Array.isArray(payload.data)) return payload.data;
+      return [];
+    }
+
     const app = {
       state: {
         adminPass: "(*812*)",
         subFee: "300",
         payNum: "01006256275",
-        sheetCsvUrl: SHEET_CSV_URL,
+        cloudUrl: DEFAULT_CLOUD_URL,
         testConfig: { count: 40, mins: 60, passPct: 70, showExp: false, trialEnabled: true, trialCount: 5 },
         users: [],
         questions: { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: [] },
@@ -531,7 +549,7 @@
             this.state = {
               ...this.state,
               ...parsed,
-              sheetCsvUrl: SHEET_CSV_URL || parsed.sheetCsvUrl || "",
+              cloudUrl: DEFAULT_CLOUD_URL || parsed.cloudUrl || "",
               testConfig: { ...this.state.testConfig, ...(parsed.testConfig || {}) }
             };
           } catch (e) { console.error(e); }
@@ -542,9 +560,8 @@
         }
         this.updatePublicBranding();
 
-        // Auto-sync CSV from Google Sheet for every user on every device
-        if (this.state.sheetCsvUrl) {
-          await this.syncFromGoogleSheetCSV(true);
+        if (this.state.cloudUrl) {
+          await this.syncFromCloud(true);
         }
 
         if (this.state.session && this.state.session.role !== "guest_trial") {
@@ -650,8 +667,8 @@
         document.getElementById("currentUserBadge").textContent = `${session.name} (${session.username})`;
         document.getElementById("btnAdminPanel").classList.toggle("hidden", session.role !== "admin");
         this.showView("dashboard");
-        if (this.state.sheetCsvUrl) {
-          this.syncFromGoogleSheetCSV(true);
+        if (this.state.cloudUrl) {
+          this.syncFromCloud(true);
         }
       },
 
@@ -743,7 +760,7 @@
           const trialSource = pool.length > 0 ? pool : SAMPLE_TRIAL_QUESTIONS;
           pool = shuffleArray(trialSource).slice(0, Math.min(limit, trialSource.length));
         } else if (pool.length === 0) {
-          alert("لا توجد أسئلة محملة لهذا الموديول بعد.\nتأكد من نشر ملف CSV في Google Sheets أو استيراد ملف CSV من لوحة المسؤول.");
+          alert("لا توجد أسئلة محملة لهذا الموديول بعد.");
           return;
         }
 
@@ -930,9 +947,9 @@
         this.renderQuestion();
       },
 
-      // ADMIN & GOOGLE SHEET CSV AUTO-SYNC
+      // ADMIN & CLOUD SYNC
       populateAdminInputs() {
-        document.getElementById("adminSheetCsvUrl").value = this.state.sheetCsvUrl || "";
+        document.getElementById("adminCloudUrl").value = this.state.cloudUrl || DEFAULT_CLOUD_URL;
         document.getElementById("adminTestCount").value = this.state.testConfig.count;
         document.getElementById("adminTestMins").value = this.state.testConfig.mins;
         document.getElementById("adminTrialCount").value = this.state.testConfig.trialCount || 5;
@@ -944,11 +961,12 @@
         document.getElementById("adminNewPass").value = this.state.adminPass;
       },
 
-      saveSheetCsvUrl() {
-        const val = document.getElementById("adminSheetCsvUrl").value.trim();
-        this.state.sheetCsvUrl = val;
+      saveCloudSettings() {
+        const cleanUrl = normalizeExecUrl(document.getElementById("adminCloudUrl").value) || DEFAULT_CLOUD_URL;
+        document.getElementById("adminCloudUrl").value = cleanUrl;
+        this.state.cloudUrl = cleanUrl;
         this.saveState();
-        this.syncFromGoogleSheetCSV(false);
+        this.syncFromCloud(false);
       },
 
       normalizeCorrectIndex(val) {
@@ -989,44 +1007,76 @@
         this.renderModules();
       },
 
-      parseAndApplyCSVText(text) {
-        const rows = parseCSVLine(text.replace(/^\uFEFF/, ""));
-        if (!rows || rows.length < 2) throw new Error("ملف CSV فارغ أو لا يحتوي على بيانات");
-        const headers = rows[0].map(h => h.trim());
-        const list = [];
-        for (let i = 1; i < rows.length; i++) {
-          if (rows[i].length < 3) continue;
-          const obj = {};
-          headers.forEach((h, idx) => obj[h] = (rows[i][idx] || "").trim());
-          if (!obj.qEn && !obj.qAr) continue;
-          list.push(obj);
-        }
-        this.applyQuestionsList(list);
+      syncViaJSONP(baseUrl, timeoutMs = 12000) {
+        return new Promise((resolve, reject) => {
+          const cbName = "fdtc_jsonp_cb_" + Date.now() + "_" + Math.floor(Math.random() * 10000);
+          const script = document.createElement("script");
+          const sep = baseUrl.includes("?") ? "&" : "?";
+          const timer = setTimeout(() => {
+            cleanup();
+            reject(new Error("JSONP timeout"));
+          }, timeoutMs);
+
+          function cleanup() {
+            clearTimeout(timer);
+            try { delete window[cbName]; } catch (_) { window[cbName] = undefined; }
+            if (script && script.parentNode) script.parentNode.removeChild(script);
+          }
+
+          window[cbName] = (data) => {
+            cleanup();
+            resolve(data);
+          };
+
+          script.onerror = () => {
+            cleanup();
+            reject(new Error("فشل تحميل السكربت — تأكد أن Web App منشور بـ Anyone"));
+          };
+
+          script.src = `${baseUrl}${sep}callback=${encodeURIComponent(cbName)}&_t=${Date.now()}`;
+          document.body.appendChild(script);
+        });
       },
 
-      async syncFromGoogleSheetCSV(silent = false) {
-        const rawUrl = (this.state.sheetCsvUrl || SHEET_CSV_URL || "").trim();
-        if (!rawUrl) {
-          if (!silent) alert("ضع رابط CSV المنشور من Google Sheets أولاً أو استورد ملف CSV محلياً.");
-          return;
-        }
-        const sep = rawUrl.includes("?") ? "&" : "?";
-        const fetchUrl = `${rawUrl}${sep}_t=${Date.now()}`;
-        const btn = document.getElementById("btnSyncSheet");
+      async syncFromCloud(silent = false) {
+        const url = normalizeExecUrl(this.state.cloudUrl || DEFAULT_CLOUD_URL);
+        this.state.cloudUrl = url;
+        this.saveState();
+
+        const btn = document.getElementById("btnSyncCloud");
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        const cacheBuster = `${url}${url.includes("?") ? "&" : "?"}_t=${Date.now()}`;
+
         try {
           if (btn) { btn.disabled = true; btn.textContent = "Syncing..."; }
-          this.setSyncStatus("جاري التحديث من الشيت...");
-          const res = await fetch(fetchUrl, { cache: "no-store" });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const csvText = await res.text();
-          this.parseAndApplyCSVText(csvText);
-          this.setSyncStatus(`محدّث (${this.getTotalQuestionsCount()} سؤال)`);
-          if (!silent) alert(`تم تحديث ${this.getTotalQuestionsCount()} سؤالاً من ملف CSV في Google Sheets!`);
+          this.setSyncStatus("جاري المزامنة...");
+          let list = [];
+          try {
+            const res = await fetch(cacheBuster, { method: "GET", redirect: "follow", cache: "no-store", signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const text = await res.text();
+            const parsed = JSON.parse(text);
+            list = extractQuestionsArray(parsed);
+          } catch (_) {
+            clearTimeout(timeoutId);
+            const jsonpData = await this.syncViaJSONP(url, 12000);
+            list = extractQuestionsArray(jsonpData);
+          }
+
+          if (!Array.isArray(list) || list.length === 0) {
+            throw new Error("لا توجد أسئلة في المصدر");
+          }
+          this.applyQuestionsList(list);
+          this.setSyncStatus(`محدّث (${list.length} سؤال)`);
+          if (!silent) alert(`تمت مزامنة ${list.length} سؤالاً بنجاح!`);
         } catch (err) {
-          this.setSyncStatus("تعذر التحديث التلقائي");
-          if (!silent) alert("تعذر جلب ملف CSV من Google Sheets: " + err.message);
+          clearTimeout(timeoutId);
+          this.setSyncStatus("تعذر التحديث");
+          if (!silent) alert("Sync error: " + err.message);
         } finally {
-          if (btn) { btn.disabled = false; btn.textContent = "Sync Sheet CSV / تحديث من الشيت"; }
+          if (btn) { btn.disabled = false; btn.textContent = "Sync Cloud / تحديث الأسئلة"; }
         }
       },
 
@@ -1036,9 +1086,20 @@
         const reader = new FileReader();
         reader.onload = (ev) => {
           try {
-            this.parseAndApplyCSVText(ev.target.result);
-            this.setSyncStatus(`مستورد محلياً (${this.getTotalQuestionsCount()} سؤال)`);
-            alert(`تم استيراد ${this.getTotalQuestionsCount()} سؤالاً من ملف CSV بنجاح!`);
+            const text = ev.target.result.replace(/^\uFEFF/, "");
+            const rows = parseCSVLine(text);
+            const headers = rows[0].map(h => h.trim());
+            const list = [];
+            for (let i = 1; i < rows.length; i++) {
+              if (rows[i].length < 3) continue;
+              const obj = {};
+              headers.forEach((h, idx) => obj[h] = (rows[i][idx] || "").trim());
+              if (!obj.qEn && !obj.qAr) continue;
+              list.push(obj);
+            }
+            this.applyQuestionsList(list);
+            this.setSyncStatus(`CSV (${this.getTotalQuestionsCount()} سؤال)`);
+            alert(`تم استيراد ${this.getTotalQuestionsCount()} سؤالاً من CSV بنجاح!`);
           } catch (err) {
             alert("خطأ في قراءة ملف CSV: " + err.message);
           }
